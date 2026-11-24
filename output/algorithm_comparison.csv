@@ -1,3 +1,3 @@
 algorithm,frequent_itemsets,rules,runtime_seconds
-apriori,15,5,0.020672100014053285
-fpgrowth,15,5,0.018122499983292073
+apriori,15,5,0.053716
+fpgrowth,15,5,0.07035

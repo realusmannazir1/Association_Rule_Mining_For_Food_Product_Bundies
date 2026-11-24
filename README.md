@@ -15,6 +15,8 @@ Official source: https://www.dunnhumby.com/source-files/ (accessed 2026-11-24)
 
 ## Run
 
+On Windows, double-click `Run_Project.bat`. It creates a private `.venv` folder if needed, checks the required packages, runs the sample analysis, and leaves the window open so any error stays visible. Results and charts are saved in `output/`; they are not opened as separate chart windows.
+
 ```powershell
 python -m pip install -r requirements.txt
 python main.py --data data/groceries.csv --support 0.10 --confidence 0.30 --lift 1.0
