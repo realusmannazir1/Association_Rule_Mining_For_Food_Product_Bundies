@@ -4,7 +4,8 @@
   "distinct_items": 4,
   "empty_transactions_removed": 0,
   "average_basket_size": 2.55,
-  "min_support": 0.05,
+  "duplicate_items_within_basket_removed_by_encoding": true,
+  "min_support": 0.1,
   "min_confidence": 0.3,
   "min_lift": 1.0
 }
