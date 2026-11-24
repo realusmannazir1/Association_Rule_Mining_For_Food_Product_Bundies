@@ -373,7 +373,7 @@ class BasketInsights(tk.Tk):
         body = tk.Frame(frame, bg=C["page"])
         body.grid(row=2, column=0, sticky="nsew")
         body.grid_columnconfigure((0, 1, 2), weight=1, uniform="kpi")
-        body.grid_rowconfigure(2, weight=1)
+        body.grid_rowconfigure(3, weight=1)
         specs = [
             ("Baskets analyzed", "transactions", "Input coverage", C["blue"], "▣"),
             ("Distinct products", "distinct_items", "Catalog breadth", C["teal"], "◈"),
@@ -388,11 +388,12 @@ class BasketInsights(tk.Tk):
             card.grid(row=i // 3, column=i % 3, sticky="ew", padx=(0 if i % 3 == 0 else 7, 7 if i % 3 < 2 else 0), pady=(0, 12))
         charts = tk.Frame(body, bg=C["page"])
         charts.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=(3, 13))
-        charts.grid_columnconfigure((0, 1), weight=1, uniform="charts")
+        charts.grid_columnconfigure((0, 1, 2), weight=1, uniform="charts")
         self.overview_chart_frames = []
-        for col in range(2):
+        for index in range(6):
+            row, col = divmod(index, 3)
             chart_card = self._card(charts)
-            chart_card.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 8, 8 if col == 0 else 0))
+            chart_card.grid(row=row, column=col, sticky="nsew", padx=(0 if col == 0 else 7, 7 if col < 2 else 0), pady=(0, 10))
             self.overview_chart_frames.append(chart_card)
         self.insight_card = self._card(body)
         self.insight_card.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 5))
@@ -731,10 +732,51 @@ class BasketInsights(tk.Tk):
         self.kpis["itemsets"][1].configure(text=f"Apriori / FP-Growth {'✓ match' if match else 'review outputs'}")
 
     def _draw_overview_charts(self):
-        if not self.frequency_data.empty:
-            self._embed_chart(self.overview_chart_frames[0], "Most purchased products", lambda ax: self._chart_products(ax, "bar"), figsize=(6.4, 3.05))
-        if self.transactions:
-            self._embed_chart(self.overview_chart_frames[1], "Basket size distribution", lambda ax: self._chart_baskets(ax, "donut"), figsize=(6.4, 3.05))
+        chart_specs = [
+            ("Most purchased products", self._chart_products),
+            ("Basket size distribution", self._chart_baskets),
+            ("Top rules by lift", self._chart_rule_lift),
+            ("Rule support vs confidence", self._chart_rule_scatter),
+            ("Algorithm runtime", self._chart_runtime),
+            ("Frequent itemsets by size", self._chart_itemset_sizes),
+        ]
+        for host, (title, draw) in zip(self.overview_chart_frames, chart_specs):
+            self._embed_chart(host, title, draw, figsize=(4.5, 2.45))
+
+    def _chart_rule_lift(self, ax):
+        if self.rule_data.empty:
+            ax.text(.5, .5, "Run analysis to see association rules", ha="center", va="center", color=C["muted"], transform=ax.transAxes); return
+        rules = self.rule_data.drop_duplicates(["antecedents", "consequents"]).nlargest(8, "lift").sort_values("lift")
+        labels = [f"{str(a)[:16]} → {str(b)[:16]}" for a, b in zip(rules.antecedents, rules.consequents)]
+        ax.barh(labels, rules.lift, color=C["purple"]); ax.set_xlabel("Lift (×)", color=C["muted"], fontsize=8)
+        ax.grid(axis="x", color=C["line"], linewidth=.8); ax.set_axisbelow(True); ax.spines[["top", "right", "left"]].set_visible(False); ax.tick_params(colors=C["muted"], labelsize=7)
+
+    def _chart_rule_scatter(self, ax):
+        if self.rule_data.empty:
+            ax.text(.5, .5, "Run analysis to compare rule quality", ha="center", va="center", color=C["muted"], transform=ax.transAxes); return
+        rules = self.rule_data.drop_duplicates(["antecedents", "consequents"])
+        points = ax.scatter(rules.support, rules.confidence, c=rules.lift, cmap="viridis", s=30, alpha=.75, edgecolors="white", linewidths=.4)
+        ax.set_xlabel("Support", fontsize=8, color=C["muted"]); ax.set_ylabel("Confidence", fontsize=8, color=C["muted"])
+        ax.grid(color=C["line"], linewidth=.7); ax.set_axisbelow(True); ax.spines[["top", "right"]].set_visible(False)
+        ax.tick_params(colors=C["muted"], labelsize=7); ax.figure.colorbar(points, ax=ax, fraction=.05, pad=.04, label="Lift")
+
+    def _chart_runtime(self, ax):
+        if not self.comparison:
+            ax.text(.5, .5, "Run both algorithms to compare runtime", ha="center", va="center", color=C["muted"], transform=ax.transAxes); return
+        labels = ["Apriori" if x["algorithm"] == "apriori" else "FP-Growth" for x in self.comparison]
+        values = [x["runtime_seconds"] for x in self.comparison]
+        bars = ax.bar(labels, values, color=[C["blue"], C["teal"]][:len(values)], width=.55)
+        ax.set_ylabel("Seconds", fontsize=8, color=C["muted"]); ax.grid(axis="y", color=C["line"], linewidth=.7); ax.set_axisbelow(True)
+        ax.spines[["top", "right", "left"]].set_visible(False); ax.tick_params(colors=C["muted"], labelsize=8)
+        for bar, value in zip(bars, values): ax.annotate(f"{value:.3f}s", (bar.get_x()+bar.get_width()/2, bar.get_height()), ha="center", xytext=(0, 3), textcoords="offset points", fontsize=8, color=C["muted"])
+
+    def _chart_itemset_sizes(self, ax):
+        if self.itemset_data.empty or "size" not in self.itemset_data:
+            ax.text(.5, .5, "No frequent itemsets at these thresholds", ha="center", va="center", color=C["muted"], transform=ax.transAxes); return
+        counts = self.itemset_data.groupby("size").size()
+        ax.bar(counts.index.astype(str), counts.values, color=C["orange"], width=.6)
+        ax.set_xlabel("Products per itemset", fontsize=8, color=C["muted"]); ax.set_ylabel("Itemsets", fontsize=8, color=C["muted"])
+        ax.grid(axis="y", color=C["line"], linewidth=.7); ax.set_axisbelow(True); ax.spines[["top", "right", "left"]].set_visible(False); ax.tick_params(colors=C["muted"], labelsize=8)
 
     def _draw_studio_chart(self):
         if not hasattr(self, "studio_chart_host"):
@@ -1046,21 +1088,41 @@ class BasketInsights(tk.Tk):
                     ws.column_dimensions[letter].width = min(48, max(12, max(len(str(c.value or "")) for c in column) + 2))
 
     def _export_pdf(self, path):
+        import tempfile
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import letter, landscape
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import inch
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as PDFImage
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as PDFImage, PageBreak
         from reportlab.lib.enums import TA_LEFT
         styles = getSampleStyleSheet()
         styles.add(ParagraphStyle(name="SmallCell", parent=styles["BodyText"], fontSize=7, leading=9, alignment=TA_LEFT))
         doc = SimpleDocTemplate(path, pagesize=landscape(letter), rightMargin=.45*inch, leftMargin=.45*inch, topMargin=.45*inch, bottomMargin=.5*inch)
-        story = [Paragraph("Basket Insights | Association Rule Analysis", styles["Title"]),
-                 Paragraph(f"Dataset: {Path(self.data_path.get()).name} · {self.summary.get('transactions',0):,} baskets · {self.summary.get('distinct_items',0):,} products", styles["BodyText"]),
-                 Spacer(1, 10)]
-        metrics = [["Minimum support", "Minimum confidence", "Minimum lift", "Frequent itemsets", "Distinct rules"],
-                   [self.min_support.get(), self.min_confidence.get(), self.min_lift.get(), str(len(self.itemset_data)), str(len(self._filtered_rules()))]]
-        story += [Table(metrics, colWidths=[1.55*inch]*5, style=TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#173B58")), ("TEXTCOLOR",(0,0),(-1,0),colors.white), ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#dbe4ed")), ("PADDING",(0,0),(-1,-1),7)])), Spacer(1, 13), Paragraph("Ranked association rules", styles["Heading2"])]
+        chart_path = None
+        story = [Paragraph("Basket Insights | Executive Dashboard", styles["Title"]),
+                 Paragraph(f"Dataset: {Path(self.data_path.get()).name} · {self.summary.get('transactions',0):,} baskets · {self.summary.get('distinct_items',0):,} products", styles["BodyText"]), Spacer(1, 8)]
+        metrics = [["Baskets", "Products", "Avg. basket", "Frequent itemsets", "Distinct rules", "Best lift"],
+                   [f"{self.summary.get('transactions',0):,}", f"{self.summary.get('distinct_items',0):,}", f"{self.summary.get('average_basket_size',0):.2f}", f"{len(self.itemset_data):,}", f"{len(self._filtered_rules()):,}", f"{self.rule_data.lift.max():.2f}×" if not self.rule_data.empty else "—"]]
+        story += [Table(metrics, colWidths=[1.55*inch]*6, style=TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#173B58")), ("TEXTCOLOR",(0,0),(-1,0),colors.white), ("TEXTCOLOR",(0,1),(-1,1),colors.HexColor("#173B58")), ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"), ("FONTSIZE",(0,0),(-1,-1),9), ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#dbe4ed")), ("PADDING",(0,0),(-1,-1),7)])), Spacer(1, 8)]
+        story += [Paragraph(f"Thresholds: support {self.min_support.get()} · confidence {self.min_confidence.get()} · lift {self.min_lift.get()}", styles["BodyText"]), Spacer(1, 8)]
+        if not self.rule_data.empty:
+            top = self.rule_data.sort_values(["lift", "support"], ascending=False).iloc[0]
+            story += [Paragraph(f"Top insight: {top['antecedents']} → {top['consequents']} · support {top['support']:.1%} · confidence {top['confidence']:.1%} · lift {top['lift']:.2f}×", styles["BodyText"]), Spacer(1, 5)]
+        # Recreate the six Overview visualizations in a single print-ready dashboard panel.
+        report_figure = Figure(figsize=(12, 6.0), dpi=140, facecolor="white")
+        FigureCanvasAgg(report_figure)
+        chart_specs = [self._chart_products, self._chart_baskets, self._chart_rule_lift,
+                       self._chart_rule_scatter, self._chart_runtime, self._chart_itemset_sizes]
+        for i, (title, draw) in enumerate(zip(("Most purchased products", "Basket size distribution", "Top rules by lift", "Rule support vs confidence", "Algorithm runtime", "Frequent itemsets by size"), chart_specs)):
+            ax = report_figure.add_subplot(2, 3, i + 1)
+            ax.set_title(title, loc="left", fontsize=10, color=C["ink"], pad=7)
+            draw(ax)
+        report_figure.tight_layout(pad=2.2)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as chart_file:
+            chart_path = chart_file.name
+        report_figure.savefig(chart_path, dpi=140, facecolor="white", bbox_inches="tight")
+        story += [PDFImage(chart_path, width=10.0*inch, height=5.0*inch), PageBreak(), Paragraph("Ranked association rules", styles["Heading2"])]
         rules = self._rules_for_export().sort_values(["lift","support"], ascending=False).head(40)
         data = [["Method", "Basket contains", "Also likely", "Support", "Confidence", "Lift"]]
         for _, r in rules.iterrows():
@@ -1071,9 +1133,11 @@ class BasketInsights(tk.Tk):
         table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#173B58")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#dbe4ed")),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f4f7fb")]),("FONTSIZE",(0,0),(-1,-1),8), ("VALIGN",(0,0),(-1,-1),"TOP"), ("PADDING",(0,0),(-1,-1),5)]))
         story += [table, Spacer(1, 12), Paragraph("Interpretation", styles["Heading2"]),
                   Paragraph("Confidence alone can overstate a rule when its consequent is already popular. Lift compares rule confidence with the consequent's baseline support. Rules describe co-purchase patterns; they do not prove causation. Results depend on the selected dataset and thresholds.", styles["BodyText"])]
-        chart_path = OUT / "metrics.png"
-        if chart_path.exists(): story += [Spacer(1, 12), PDFImage(str(chart_path), width=5.7*inch, height=1.9*inch)]
-        doc.build(story)
+        try:
+            doc.build(story)
+        finally:
+            if chart_path and os.path.exists(chart_path):
+                os.remove(chart_path)
 
     # --------------------------------------------------------------- controls
     def _global_search_changed(self):
