@@ -22,7 +22,7 @@ if errorlevel 1 (
 )
 
 echo Opening Basket Insights...
-%PYTHON_CMD% app.py
+%PYTHON_CMD% main.py --gui
 if errorlevel 1 goto :failed
 exit /b 0
 

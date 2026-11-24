@@ -13,12 +13,21 @@ from src.visualize import plot_heatmap, plot_metrics, plot_network
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare Apriori and FP-Growth for food bundles")
+    parser.add_argument("--gui", action="store_true", help="Open the Basket Insights desktop dashboard")
     parser.add_argument("--data", default="data/groceries.csv", help="CSV: wide baskets or basket_id,product_name rows")
     parser.add_argument("--support", type=float, default=0.10)
     parser.add_argument("--confidence", type=float, default=0.30)
     parser.add_argument("--lift", type=float, default=1.0)
     parser.add_argument("--out", default="output")
     args = parser.parse_args()
+
+    if args.gui:
+        # Import lazily so command-line analysis remains usable without starting Tk.
+        from app import BasketInsights
+
+        BasketInsights().mainloop()
+        return
+
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
