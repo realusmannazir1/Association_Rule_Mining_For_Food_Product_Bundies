@@ -15,7 +15,7 @@ Official source: https://www.dunnhumby.com/source-files/ (accessed 2026-11-24)
 
 ## Run
 
-On Windows, double-click `Run_Project.bat` to open the Basket Insights desktop app. Choose a CSV, set support/confidence/lift, then select **Run analysis**. The app compares Apriori and FP-Growth, displays the ranked rules and charts, and saves tables and images in `output/`. If dependencies are missing, the launcher installs them from `requirements.txt`.
+On Windows, double-click `Run_Project.bat` to open the Basket Insights desktop app. The dashboard includes collapsible navigation, a searchable and sortable rule explorer, frequent itemsets, an algorithm comparison, a chart studio, dataset settings, and report exports. Choose a CSV and thresholds, then select **Run analysis**. Exports include a multi-sheet Excel workbook, filtered rules CSV, and a PDF report. Results and charts are also saved in `output/`. If dependencies are missing, the launcher installs them from `requirements.txt`.
 
 ```powershell
 python -m pip install -r requirements.txt
