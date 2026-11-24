@@ -110,13 +110,54 @@ class BasketInsights(tk.Tk):
         self.workspace.grid_rowconfigure(1, weight=1)
         self.workspace.grid_columnconfigure(0, weight=1)
         self._build_header()
-        self.page_host = tk.Frame(self.workspace, bg=C["page"])
-        self.page_host.grid(row=1, column=0, sticky="nsew", padx=28, pady=(18, 12))
+        self.page_view = tk.Frame(self.workspace, bg=C["page"])
+        self.page_view.grid(row=1, column=0, sticky="nsew", padx=(28, 12), pady=(18, 12))
+        self.page_view.grid_rowconfigure(0, weight=1)
+        self.page_view.grid_columnconfigure(0, weight=1)
+        self.page_canvas = tk.Canvas(self.page_view, bg=C["page"], highlightthickness=0, bd=0)
+        self.page_canvas.grid(row=0, column=0, sticky="nsew")
+        self.page_scrollbar = ttk.Scrollbar(self.page_view, orient="vertical", command=self.page_canvas.yview)
+        self.page_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.page_canvas.configure(yscrollcommand=self.page_scrollbar.set)
+        self.page_host = tk.Frame(self.page_canvas, bg=C["page"])
+        self.page_window = self.page_canvas.create_window((0, 0), window=self.page_host, anchor="nw")
+        self.page_host.bind("<Configure>", self._update_page_scrollregion)
+        self.page_canvas.bind("<Configure>", self._resize_page_content)
+        self.page_canvas.bind("<Enter>", self._bind_page_wheel)
+        self.page_canvas.bind("<Leave>", self._unbind_page_wheel)
         self.page_host.grid_rowconfigure(0, weight=1)
         self.page_host.grid_columnconfigure(0, weight=1)
         self._build_pages()
         self._build_statusbar()
         self._show_page("Overview")
+
+    def _update_page_scrollregion(self, _event=None):
+        self.page_canvas.configure(scrollregion=self.page_canvas.bbox("all"))
+
+    def _resize_page_content(self, event):
+        self.page_canvas.itemconfigure(self.page_window, width=event.width)
+        self._update_page_scrollregion()
+
+    def _bind_page_wheel(self, _event=None):
+        self.bind_all("<MouseWheel>", self._scroll_page_wheel)
+        self.bind_all("<Button-4>", self._scroll_page_wheel)
+        self.bind_all("<Button-5>", self._scroll_page_wheel)
+
+    def _unbind_page_wheel(self, _event=None):
+        self.unbind_all("<MouseWheel>")
+        self.unbind_all("<Button-4>")
+        self.unbind_all("<Button-5>")
+
+    def _scroll_page_wheel(self, event):
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            delta = -int(event.delta / 120) if event.delta else 0
+        if delta:
+            self.page_canvas.yview_scroll(delta, "units")
+        return "break"
 
     def _build_sidebar(self):
         self.brand = tk.Frame(self.sidebar, bg=C["nav"])
