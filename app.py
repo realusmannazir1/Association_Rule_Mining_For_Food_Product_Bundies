@@ -388,13 +388,12 @@ class BasketInsights(tk.Tk):
             card.grid(row=i // 3, column=i % 3, sticky="ew", padx=(0 if i % 3 == 0 else 7, 7 if i % 3 < 2 else 0), pady=(0, 12))
         charts = tk.Frame(body, bg=C["page"])
         charts.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=(3, 13))
-        charts.grid_columnconfigure((0, 1, 2), weight=1, uniform="charts")
-        self.overview_chart_frames = []
-        for index in range(6):
-            row, col = divmod(index, 3)
-            chart_card = self._card(charts)
-            chart_card.grid(row=row, column=col, sticky="nsew", padx=(0 if col == 0 else 7, 7 if col < 2 else 0), pady=(0, 10))
-            self.overview_chart_frames.append(chart_card)
+        charts.grid_columnconfigure(0, weight=1)
+        chart_card = self._card(charts)
+        chart_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        tk.Label(chart_card, text="Analytics at a glance", bg=C["surface"], fg=C["ink"], font=(FONT, 11, "bold")).pack(anchor="w", padx=15, pady=(12, 0))
+        self.overview_chart_host = tk.Frame(chart_card, bg=C["surface"])
+        self.overview_chart_host.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.insight_card = self._card(body)
         self.insight_card.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 5))
         self._label(self.insight_card, "INSIGHT SPOTLIGHT", size=8, color=C["teal"], bold=True).pack(anchor="w", padx=16, pady=(13, 4))
@@ -732,16 +731,33 @@ class BasketInsights(tk.Tk):
         self.kpis["itemsets"][1].configure(text=f"Apriori / FP-Growth {'✓ match' if match else 'review outputs'}")
 
     def _draw_overview_charts(self):
-        chart_specs = [
+        host = self.overview_chart_host
+        for child in host.winfo_children():
+            child.destroy()
+        titles_and_drawers = (
             ("Most purchased products", self._chart_products),
             ("Basket size distribution", self._chart_baskets),
             ("Top rules by lift", self._chart_rule_lift),
             ("Rule support vs confidence", self._chart_rule_scatter),
             ("Algorithm runtime", self._chart_runtime),
             ("Frequent itemsets by size", self._chart_itemset_sizes),
-        ]
-        for host, (title, draw) in zip(self.overview_chart_frames, chart_specs):
-            self._embed_chart(host, title, draw, figsize=(4.5, 2.45))
+        )
+        fig = Figure(figsize=(12, 7.0), dpi=85, facecolor=C["surface"])
+        axes = []
+        for index, (title, draw) in enumerate(titles_and_drawers):
+            ax = fig.add_subplot(2, 3, index + 1)
+            ax.set_title(title, loc="left", color=C["ink"], fontsize=10, fontweight="bold", pad=9)
+            draw(ax)
+            axes.append(ax)
+        fig.tight_layout(pad=2.4)
+        canvas = FigureCanvasTkAgg(fig, master=host)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        canvas.mpl_connect("motion_notify_event", lambda event: self._overview_chart_hover(event, axes, canvas))
+
+    def _overview_chart_hover(self, event, axes, canvas):
+        if event.inaxes in axes:
+            self._chart_hover(event, event.inaxes, canvas)
 
     def _chart_rule_lift(self, ax):
         if self.rule_data.empty:
@@ -819,7 +835,7 @@ class BasketInsights(tk.Tk):
         wedges, _, _ = ax.pie(sizes.values, labels=None, autopct="%1.0f%%", startangle=90,
                               colors=[C["teal"], C["blue"], C["orange"], C["purple"], C["green"]][:len(sizes)],
                               wedgeprops={"width": .42} if kind == "donut" else {})
-        ax.legend(wedges, labels, loc="center left", bbox_to_anchor=(.86, .5), frameon=False, fontsize=8)
+        ax.legend(wedges, labels, loc="lower center", bbox_to_anchor=(.5, -.08), ncol=min(3, len(labels)), frameon=False, fontsize=7)
         ax.set_aspect("equal")
 
     def _plot_series(self, ax, labels, values, kind, ylabel, title, pie_label=""):
@@ -1072,7 +1088,20 @@ class BasketInsights(tk.Tk):
         summary = pd.DataFrame([self.summary | {"min_support":self.min_support.get(), "min_confidence":self.min_confidence.get(), "min_lift":self.min_lift.get()}])
         compare = pd.DataFrame(self.comparison)
         items = self.itemset_data.copy()
+        best_lift = float(self.rule_data["lift"].max()) if not self.rule_data.empty else 0
+        unique_rules = self.rule_data.drop_duplicates(["antecedents", "consequents"]) if not self.rule_data.empty else self.rule_data
+        dashboard = pd.DataFrame([
+            ("Baskets analyzed", self.summary.get("transactions", 0), "All available baskets"),
+            ("Distinct products", self.summary.get("distinct_items", 0), "Products observed"),
+            ("Average basket size", self.summary.get("average_basket_size", 0), "Distinct items per basket"),
+            ("Frequent itemsets", len(self.itemset_data), f"Minimum support: {self.min_support.get()}"),
+            ("Distinct association rules", len(unique_rules), "Deduplicated across algorithms"),
+            ("Best lift", best_lift, "Compared with independence"),
+            ("Dataset", Path(self.data_path.get()).name, "Source file"),
+            ("Confidence note", "Confidence alone can mislead", "Use lift to account for consequent popularity"),
+        ], columns=("Metric", "Value", "Context"))
         with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            dashboard.to_excel(writer, sheet_name="Dashboard", index=False)
             rules.to_excel(writer, sheet_name="Association Rules", index=False)
             items.to_excel(writer, sheet_name="Frequent Itemsets", index=False)
             compare.to_excel(writer, sheet_name="Algorithm Comparison", index=False)
@@ -1088,6 +1117,7 @@ class BasketInsights(tk.Tk):
                     ws.column_dimensions[letter].width = min(48, max(12, max(len(str(c.value or "")) for c in column) + 2))
 
     def _export_pdf(self, path):
+        import html
         import tempfile
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from reportlab.lib import colors
@@ -1097,18 +1127,22 @@ class BasketInsights(tk.Tk):
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as PDFImage, PageBreak
         from reportlab.lib.enums import TA_LEFT
         styles = getSampleStyleSheet()
-        styles.add(ParagraphStyle(name="SmallCell", parent=styles["BodyText"], fontSize=7, leading=9, alignment=TA_LEFT))
+        styles.add(ParagraphStyle(name="SmallCell", parent=styles["BodyText"], fontSize=7.2, leading=9, alignment=TA_LEFT, wordWrap="CJK"))
+        styles.add(ParagraphStyle(name="SmallCellCenter", parent=styles["SmallCell"], alignment=1))
+        styles.add(ParagraphStyle(name="SmallCellHeader", parent=styles["SmallCellCenter"], textColor=colors.white))
         doc = SimpleDocTemplate(path, pagesize=landscape(letter), rightMargin=.45*inch, leftMargin=.45*inch, topMargin=.45*inch, bottomMargin=.5*inch)
         chart_path = None
         story = [Paragraph("Basket Insights | Executive Dashboard", styles["Title"]),
                  Paragraph(f"Dataset: {Path(self.data_path.get()).name} · {self.summary.get('transactions',0):,} baskets · {self.summary.get('distinct_items',0):,} products", styles["BodyText"]), Spacer(1, 8)]
         metrics = [["Baskets", "Products", "Avg. basket", "Frequent itemsets", "Distinct rules", "Best lift"],
                    [f"{self.summary.get('transactions',0):,}", f"{self.summary.get('distinct_items',0):,}", f"{self.summary.get('average_basket_size',0):.2f}", f"{len(self.itemset_data):,}", f"{len(self._filtered_rules()):,}", f"{self.rule_data.lift.max():.2f}×" if not self.rule_data.empty else "—"]]
-        story += [Table(metrics, colWidths=[1.55*inch]*6, style=TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#173B58")), ("TEXTCOLOR",(0,0),(-1,0),colors.white), ("TEXTCOLOR",(0,1),(-1,1),colors.HexColor("#173B58")), ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"), ("FONTSIZE",(0,0),(-1,-1),9), ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#dbe4ed")), ("PADDING",(0,0),(-1,-1),7)])), Spacer(1, 8)]
+        metrics_table = [[Paragraph(f"<b>{html.escape(str(cell))}</b>", styles["SmallCellHeader"]) for cell in metrics[0]],
+                         [Paragraph(f"<b>{html.escape(str(cell))}</b>", styles["SmallCellCenter"]) for cell in metrics[1]]]
+        story += [Table(metrics_table, colWidths=[1.68*inch]*6, style=TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#173B58")), ("TEXTCOLOR",(0,0),(-1,0),colors.white), ("TEXTCOLOR",(0,1),(-1,1),colors.HexColor("#173B58")), ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#dbe4ed")), ("VALIGN",(0,0),(-1,-1),"MIDDLE"), ("PADDING",(0,0),(-1,-1),7)])), Spacer(1, 8)]
         story += [Paragraph(f"Thresholds: support {self.min_support.get()} · confidence {self.min_confidence.get()} · lift {self.min_lift.get()}", styles["BodyText"]), Spacer(1, 8)]
         if not self.rule_data.empty:
             top = self.rule_data.sort_values(["lift", "support"], ascending=False).iloc[0]
-            story += [Paragraph(f"Top insight: {top['antecedents']} → {top['consequents']} · support {top['support']:.1%} · confidence {top['confidence']:.1%} · lift {top['lift']:.2f}×", styles["BodyText"]), Spacer(1, 5)]
+            story += [Paragraph(f"<b>Top insight:</b> {html.escape(str(top['antecedents']))} then {html.escape(str(top['consequents']))} · support {top['support']:.1%} · confidence {top['confidence']:.1%} · lift {top['lift']:.2f}x", styles["BodyText"]), Spacer(1, 5)]
         # Recreate the six Overview visualizations in a single print-ready dashboard panel.
         report_figure = Figure(figsize=(12, 6.0), dpi=140, facecolor="white")
         FigureCanvasAgg(report_figure)
@@ -1124,13 +1158,18 @@ class BasketInsights(tk.Tk):
         report_figure.savefig(chart_path, dpi=140, facecolor="white", bbox_inches="tight")
         story += [PDFImage(chart_path, width=10.0*inch, height=5.0*inch), PageBreak(), Paragraph("Ranked association rules", styles["Heading2"])]
         rules = self._rules_for_export().sort_values(["lift","support"], ascending=False).head(40)
-        data = [["Method", "Basket contains", "Also likely", "Support", "Confidence", "Lift"]]
+        data = [[Paragraph(f"<b>{x}</b>", styles["SmallCellHeader"]) for x in ("Method", "Basket contains", "Also likely", "Support", "Confidence", "Lift")]]
         for _, r in rules.iterrows():
             sources = self.rule_data.loc[(self.rule_data.antecedents == r.antecedents)&(self.rule_data.consequents == r.consequents),"algorithm"].unique()
             method = "Both" if len(sources)>1 else sources[0]
-            data.append([method, r.antecedents, r.consequents, f"{r.support:.3f}", f"{r.confidence:.3f}", f"{r.lift:.3f}"])
-        table = Table(data, repeatRows=1, colWidths=[1.0*inch,2.5*inch,2.5*inch,.85*inch,1.0*inch,.7*inch])
-        table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#173B58")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#dbe4ed")),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f4f7fb")]),("FONTSIZE",(0,0),(-1,-1),8), ("VALIGN",(0,0),(-1,-1),"TOP"), ("PADDING",(0,0),(-1,-1),5)]))
+            data.append([Paragraph(html.escape(str(method)), styles["SmallCell"]),
+                         Paragraph(html.escape(str(r.antecedents)), styles["SmallCell"]),
+                         Paragraph(html.escape(str(r.consequents)), styles["SmallCell"]),
+                         Paragraph(f"{r.support:.3f}", styles["SmallCellCenter"]),
+                         Paragraph(f"{r.confidence:.3f}", styles["SmallCellCenter"]),
+                         Paragraph(f"{r.lift:.3f}", styles["SmallCellCenter"])])
+        table = Table(data, repeatRows=1, colWidths=[.85*inch,3.05*inch,3.05*inch,1.0*inch,1.15*inch,1.0*inch])
+        table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#173B58")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#dbe4ed")),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f4f7fb")]),("VALIGN",(0,0),(-1,-1),"TOP"), ("PADDING",(0,0),(-1,-1),6)]))
         story += [table, Spacer(1, 12), Paragraph("Interpretation", styles["Heading2"]),
                   Paragraph("Confidence alone can overstate a rule when its consequent is already popular. Lift compares rule confidence with the consequent's baseline support. Rules describe co-purchase patterns; they do not prove causation. Results depend on the selected dataset and thresholds.", styles["BodyText"])]
         try:
